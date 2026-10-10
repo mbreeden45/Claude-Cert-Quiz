@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>CCAO-F Practice Quiz</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="theme-color" content="#6b2a84">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="description" content="Interactive practice quiz for the Claude Certified Associate – Foundations (CCAO-F) exam.">
 <style>
 :root{
@@ -68,6 +73,13 @@ ul.rules{padding-left:1.2em;margin:0 0 16px}ul.rules li{margin-bottom:6px}
 .dot.part{border-style:dashed;border-color:var(--warn)}
 .tag.flagtag{background:#fdecc8;color:#7a4a00}
 details>summary{cursor:pointer}
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.opt{min-height:52px;align-items:center}
+.actions{position:sticky;bottom:0;background:var(--card);padding:10px 0 calc(10px + env(safe-area-inset-bottom));margin-top:10px;border-top:1px solid var(--line)}
+.hero{background:var(--brand);color:#fff;border:0}.hero b{font-size:1.1rem}.hero span{color:#f1e8f6}
+.hist td{font-size:.88rem}
+.tag.speed{background:#fff1c9;color:#7a4a00}
+@media (max-width:480px){.wrap{padding:14px 12px 40px}.topbar{flex-wrap:wrap}}
 footer{margin-top:30px;color:var(--muted);font-size:.82rem;text-align:center}
 footer a{color:var(--brand)}
 .note{font-size:.85rem;color:var(--muted)}
@@ -82,6 +94,10 @@ const Q = window.QUESTIONS, D = window.DOMAINS;
 const app = document.getElementById('app');
 const KEY = 'ccaof-quiz-v1';
 const EXAM_SECS = 120*60;
+const SPEED_N = 10, SPEED_SECS = Math.round(EXAM_SECS/Q.length)*SPEED_N; // 2 min per question -> 20:00
+const HKEY='ccaof-history-v1', QKEY='ccaof-qstats-v1';
+const jget=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const jset=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 const PASS = 0.75;
 let S = null;       // current session
 let tick = null;
@@ -97,50 +113,80 @@ const isMulti = q=>q.a.length>1;
 function correct(q,sel){return sel&&sel.length===q.a.length&&q.a.every(x=>sel.includes(x))}
 
 /* ---------- home / instructions ---------- */
+function progressHTML(){
+  const hist=jget(HKEY,[]), qs=jget(QKEY,{});
+  if(!hist.length) return '';
+  const dm=Object.keys(D).map(k=>{
+    let n=0,c=0;Q.filter(q=>q.d==k).forEach(q=>{const t=qs[q.id];if(t){n+=t.seen;c+=t.seen-t.wrong}});
+    const p=n?c/n:null;
+    return `<tr><td>${k}. ${esc(D[k])}</td><td class="n">${p==null?'–':Math.round(p*100)+'%'}</td><td style="width:70px"><div class="dbar"><i style="width:${(p||0)*100}%;background:${p!=null&&p<PASS?'var(--bad)':'var(--ok)'}"></i></div></td></tr>`}).join('');
+  const rows=hist.slice(-6).reverse().map(r=>`<tr><td>${new Date(r.t).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</td><td>${esc(r.label)}</td><td class="n"><b>${Math.round(r.c/r.n*100)}%</b> (${r.c}/${r.n})</td></tr>`).join('');
+  const seen=Object.keys(qs).length;
+  return `<h2>Your progress</h2><div class="card hist"><div class="note">${hist.length} session${hist.length>1?'s':''} · ${seen}/${Q.length} questions seen · saved on this device</div>
+    <table style="margin-top:8px"><tr><th>All-time accuracy by domain</th><th class="n"></th><th></th></tr>${dm}</table>
+    <table style="margin-top:12px">${rows}</table>
+    <div style="margin-top:10px"><button class="btn ghost" id="clearhist">Clear saved results</button></div></div>`;
+}
 function home(){
   clearInterval(tick);
   const saved = load();
   app.innerHTML = '';
-  const dom = Object.keys(D).map(k=>`<button class="mode" data-m="d${k}"><b>Domain ${k}: ${esc(D[k])}</b><span>${Q.filter(q=>q.d==k).length} questions · instant feedback</span></button>`).join('');
+  const dom = Object.keys(D).map(k=>`<button class="mode" data-m="d${k}"><b>Domain ${k}: ${esc(D[k])}</b><span>${Q.filter(q=>q.d==k).length} questions · instant feedback · untimed</span></button>`).join('');
+  const inprog = saved&&!saved.done;
   const h = el(`<div>
     <h1>Claude Certified Associate – Foundations</h1>
-    <p class="sub">CCAO-F · Full-length practice exam</p>
-    ${saved&&!saved.done?`<div class="card"><b>Exam in progress</b><div class="note">${Object.keys(saved.ans).length} of ${saved.ids.length} answered</div><div class="row" style="margin-top:10px"><button class="btn" id="resume">Resume exam</button><button class="btn ghost" id="discard">Abandon</button></div></div>`:''}
+    <p class="sub">CCAO-F practice</p>
+    ${inprog?`<div class="card"><b>${esc(saved.label)} in progress</b><div class="note">${Object.keys(saved.ans).length} of ${saved.ids.length} answered${saved.limit?' · '+fmt(Math.max(0,saved.limit-(saved.elapsed||0)))+' left':''}</div><div class="row" style="margin-top:10px"><button class="btn" id="resume">Resume</button><button class="btn ghost" id="discard">Abandon</button></div></div>`:''}
+    <button class="mode hero" data-m="speed"><b>⚡ Speed round</b><span>${SPEED_N} questions · ${fmt(SPEED_SECS)} (2 min each, same pace as the exam) · instant feedback. Favors questions you haven’t seen or missed.</span></button>
     <div class="card">
-      <h2 style="margin-top:0">Before you begin</h2>
+      <h2 style="margin-top:0">Full practice exam</h2>
       <ul class="rules">
-        <li><b>60 questions</b>, drawn from all seven domains in blueprint proportions, presented in mixed order.</li>
-        <li><b>120 minutes</b>. The timer starts when you press Begin and the exam submits automatically at zero.</li>
-        <li>Multiple choice (select ONE) and multiple response (select the number stated).</li>
-        <li>No feedback during the exam. You can change answers and <b>mark questions for review</b> before you submit.</li>
-        <li>Scores are reported per domain. Aim for roughly <b>75%</b> or better in every domain.</li>
+        <li><b>60 questions</b> across all seven domains in blueprint proportions, mixed order.</li>
+        <li><b>120 minutes</b>; auto-submits at zero. No feedback until you submit.</li>
+        <li>Change answers and <b>mark for review</b> before submitting. Aim for ~<b>75%</b> in every domain.</li>
       </ul>
       <button class="btn" id="begin">Begin exam</button>
     </div>
-    <details class="card"><summary><b>Study mode</b> <span class="note">· instant feedback by domain</span></summary><div style="margin-top:12px">${dom}</div></details>
-    <footer>Questions &amp; rationales by <a href="https://linkedin.com/in/purcellmatthew" target="_blank" rel="noopener">Matthew Purcell</a>, written against Exam Guide v1.0 (July 2026). Original practice items, not actual exam content.</footer>
+    <details class="card"><summary><b>Study mode</b> <span class="note">· by domain, untimed</span></summary><div style="margin-top:12px">${dom}</div></details>
+    ${progressHTML()}
+    <footer>Questions &amp; rationales by <a href="https://linkedin.com/in/purcellmatthew" target="_blank" rel="noopener">Matthew Purcell</a>, written against Exam Guide v1.0 (July 2026). Original practice items, not actual exam content.<br>Progress and results are cached on this device and the app works offline once loaded.</footer>
   </div>`);
   app.appendChild(h);
-  h.querySelectorAll('.mode').forEach(b=>b.onclick=()=>start(b.dataset.m));
-  h.querySelector('#begin').onclick=()=>{ if(saved&&!saved.done&&!confirm('This replaces your exam in progress. Continue?'))return; start('exam')};
-  const r=h.querySelector('#resume'); if(r) r.onclick=()=>{S=saved;S.t0=Date.now()-(S.elapsed||0)*1000;S.review=false;render()};
-  const d=h.querySelector('#discard'); if(d) d.onclick=()=>{if(confirm('Abandon this exam?')){clear();home()}};
+  const go=m=>{ if(inprog&&!confirm('This replaces your session in progress. Continue?'))return; start(m)};
+  h.querySelectorAll('.mode').forEach(b=>b.onclick=()=>go(b.dataset.m));
+  h.querySelector('#begin').onclick=()=>go('exam');
+  const r=h.querySelector('#resume'); if(r) r.onclick=()=>{S=saved;S.limit=S.limit||(S.exam?EXAM_SECS:null);S.mode=S.mode||(S.exam?'exam':'study');S.t0=Date.now()-(S.elapsed||0)*1000;S.review=false;render()};
+  const d=h.querySelector('#discard'); if(d) d.onclick=()=>{if(confirm('Abandon this session?')){clear();home()}};
+  const c=h.querySelector('#clearhist'); if(c) c.onclick=()=>{if(confirm('Delete all saved results and question stats?')){try{localStorage.removeItem(HKEY);localStorage.removeItem(QKEY)}catch(e){}home()}};
+}
+
+function pickSpeed(){
+  const qs=jget(QKEY,{});
+  const pool=Q.map(q=>{const t=qs[q.id];let w=!t?3:(t.lastWrong?4:1);return {q,w}});
+  const out=[];
+  while(out.length<SPEED_N&&pool.length){
+    const tot=pool.reduce((a,x)=>a+x.w,0);let r=Math.random()*tot,i=0;
+    for(;i<pool.length-1;i++){r-=pool[i].w;if(r<0)break}
+    out.push(pool.splice(i,1)[0].q);
+  }
+  return out;
 }
 
 function start(m){
-  let qs,label,exam=false;
-  if(m==='exam'){qs=shuffle(Q);label='practice exam';exam=true}
-  else {const k=m.slice(1);qs=Q.filter(q=>q.d==k);label='Domain '+k+' study'}
-  S={ids:qs.map(q=>q.id),i:0,ans:{},flag:{},exam,label,done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};
+  let qs,label,mode,limit=null;
+  if(m==='exam'){qs=shuffle(Q);label='Practice exam';mode='exam';limit=EXAM_SECS}
+  else if(m==='speed'){qs=pickSpeed();label='Speed round';mode='speed';limit=SPEED_SECS}
+  else {const k=m.slice(1);qs=Q.filter(q=>q.d==k);label='Domain '+k+' study';mode='study'}
+  S={ids:qs.map(q=>q.id),i:0,ans:{},flag:{},exam:mode==='exam',mode,limit,label,done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};
   save();render();
 }
 
 /* ---------- exam / study screen ---------- */
-function timeLeft(){return Math.max(0,EXAM_SECS-Math.floor((Date.now()-S.t0)/1000))}
+function timeLeft(){return Math.max(0,S.limit-Math.floor((Date.now()-S.t0)/1000))}
 function fmt(s){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')}
 function startClock(clock){
-  const upd=()=>{const t=timeLeft();clock.textContent=fmt(t);clock.classList.toggle('low',t<600);
-    if(t<=0){clearInterval(tick);alert('Time is up. Your exam will now be submitted.');finish()}};
+  const upd=()=>{const t=timeLeft();S.elapsed=S.limit-t;if(!S.done)save();clock.textContent=fmt(t);clock.classList.toggle('low',t<(S.exam?600:120));
+    if(t<=0){clearInterval(tick);alert('Time is up. Your '+(S.exam?'exam':'round')+' will now be submitted.');finish()}};
   upd();tick=setInterval(upd,1000);
 }
 
@@ -164,13 +210,13 @@ function render(){
   const last=S.i===total-1;
   app.innerHTML='';
   const h=el(`<div>
-    <div class="topbar">${S.exam?'<span class="clockbox">Time remaining <b id="clock"></b></span>':'<button class="btn ghost" id="home">← Menu</button>'}<span>Question <b>${S.i+1}</b> of ${total}</span></div>
+    <div class="topbar">${S.exam?'':'<button class="btn ghost" id="home">← Menu</button>'}${S.limit?'<span class="clockbox">'+(S.exam?'Time remaining ':'⏱ ')+'<b id="clock"></b></span>':''}<span>Question <b>${S.i+1}</b> of ${total}</span></div>
     <div class="bar"><i style="width:${answered/total*100}%"></i></div>
     <div class="card">
-      <div><span class="tag">${isMulti(q)?'Select '+(need(q)===2?'TWO':need(q)):'Select ONE'}</span>${S.flag[q.id]?'<span class="tag flagtag">Marked for review</span>':''}${S.exam?'':`<span class="tag">Domain ${q.d}</span>`}</div>
+      <div><span class="tag">${isMulti(q)?'Select '+(need(q)===2?'TWO':need(q)):'Select ONE'}</span>${S.flag[q.id]?'<span class="tag flagtag">Marked for review</span>':''}${S.mode==='speed'?'<span class="tag speed">⚡ Speed</span>':''}${S.exam?'':`<span class="tag">Domain ${q.d}</span>`}</div>
       <p class="q">${esc(q.q)}</p>${steps}${opts}${fb}
-      <div class="row" style="margin-top:14px">
-        <button class="btn ghost" id="prev" ${S.i===0?'disabled':''}>Previous</button>
+      <div class="row actions">
+        <button class="btn ghost" id="prev" ${S.i===0||S.mode==='speed'?'disabled':''}>Previous</button>
         <button class="btn ghost" id="flag">${S.flag[q.id]?'Unmark':'Mark for review'}</button>
         <span class="grow"></span>
         ${!S.exam&&!revealed?`<button class="btn" id="check" ${sel.length!==need(q)?'disabled':''}>Check answer</button>`
@@ -188,7 +234,7 @@ function render(){
   const ch=h.querySelector('#check'); if(ch) ch.onclick=()=>{S.checked[q.id]=true;save();render()};
   const goRev=()=>{ if(S.exam){S.review=true;save();render()} else finish() };
   ['#review','#review2'].forEach(id=>{const b=h.querySelector(id); if(b) b.onclick=goRev});
-  if(S.exam) startClock(h.querySelector('#clock'));
+  if(S.limit) startClock(h.querySelector('#clock'));
 }
 
 function pick(q,k){
@@ -240,7 +286,16 @@ function reviewScreen(){
   startClock(h.querySelector('#clock'));
 }
 
-function finish(){S.done=true;S.review=false;S.elapsed=Math.min(EXAM_SECS,Math.floor((Date.now()-S.t0)/1000));clearInterval(tick);save();results()}
+function record(){
+  const qs=S.ids.map(id=>Q.find(q=>q.id===id)),per={};let c=0;
+  const st=jget(QKEY,{});
+  qs.forEach(q=>{const ok=correct(q,S.ans[q.id]);per[q.d]=per[q.d]||{n:0,c:0};per[q.d].n++;if(ok){per[q.d].c++;c++}
+    // in a timed round only count questions actually reached/answered, so unseen ones stay "unseen"
+    if(S.ans[q.id]||S.exam){const t=st[q.id]||{seen:0,wrong:0};t.seen++;if(!ok)t.wrong++;t.lastWrong=!ok;st[q.id]=t}});
+  const h=jget(HKEY,[]);h.push({t:Date.now(),label:S.label,mode:S.mode,n:qs.length,c,per,secs:S.elapsed});
+  jset(HKEY,h.slice(-100));jset(QKEY,st);
+}
+function finish(){S.done=true;S.review=false;S.elapsed=Math.min(S.limit||1e9,Math.floor((Date.now()-S.t0)/1000));clearInterval(tick);record();save();results()}
 
 /* ---------- results ---------- */
 function results(){
@@ -259,14 +314,14 @@ function results(){
       <div class="fb"><div>${esc(q.w)}</div><small><b>Why not the others:</b> ${esc(q.n)}</small></div></details>`}).join('');
   app.innerHTML='';
   const h=el(`<div>
-    <h1>Exam complete</h1><p class="sub">${esc(S.label)} · time used ${fmt(S.elapsed)}</p>
+    <h1>${S.mode==='exam'?'Exam complete':S.mode==='speed'?'Round complete':'Session complete'}</h1><p class="sub">${esc(S.label)} · time used ${fmt(S.elapsed)}</p>
     <div class="card"><div class="score ${pct>=PASS?'pass':'fail'}">${Math.round(pct*100)}%</div>
       <div><b>${pct>=PASS?'Meets':'Below'} the 75% readiness target</b> · ${tot} of ${qs.length} correct</div>
       ${weak.length?`<p class="note">Below 75% in: ${weak.map(k=>esc(D[k])).join('; ')}.</p>`:'<p class="note">At or above 75% in every domain.</p>'}
       <h2>Performance by domain</h2><table><tr><th>Domain</th><th class="n">Score</th><th class="n">Correct</th><th></th></tr>${rows}</table>
       <div class="row" style="margin-top:16px">
         <button class="btn" id="showkey">${S.showKey?'Hide':'Review'} answers &amp; rationales</button>
-        <button class="btn ghost" id="again">Back to start</button>
+        ${S.mode==='speed'?'<button class="btn" id="speedagain">Another speed round</button>':''}<button class="btn ghost" id="again">Back to start</button>
         ${tot<qs.length?'<button class="btn ghost" id="retry">Retry missed (study mode)</button>':''}
       </div></div>
     ${S.showKey?`<h2>Answer review</h2>${review}`:''}
@@ -274,13 +329,15 @@ function results(){
   app.appendChild(h);
   h.querySelector('#showkey').onclick=()=>{S.showKey=!S.showKey;save();results()};
   h.querySelector('#again').onclick=()=>{clear();home()};
+  const sa=h.querySelector('#speedagain'); if(sa) sa.onclick=()=>start('speed');
   const r=h.querySelector('#retry');
   if(r) r.onclick=()=>{const miss=qs.filter(q=>!correct(q,S.ans[q.id])).map(q=>q.id);
-    S={ids:miss,i:0,ans:{},flag:{},exam:false,label:'retry of missed questions',done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};save();render()};
+    S={ids:miss,i:0,ans:{},flag:{},exam:false,mode:'study',limit:null,label:'retry of missed questions',done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};save();render()};
   window.scrollTo(0,0);
 }
 
 home();
+if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 })();
 </script>
 </body>
