@@ -63,6 +63,11 @@ td.n,th.n{text-align:right;white-space:nowrap}
 .dot.ok{background:var(--ok-bg);border-color:var(--ok)}
 .dot.bad{background:var(--bad-bg);border-color:var(--bad)}
 .dot.flag{box-shadow:inset 0 -4px 0 var(--warn)}
+.clockbox{font-size:.95rem}.clockbox b{font-variant-numeric:tabular-nums;font-size:1.1rem;color:var(--ink)}.clockbox b.low{color:var(--bad)}
+ul.rules{padding-left:1.2em;margin:0 0 16px}ul.rules li{margin-bottom:6px}
+.dot.part{border-style:dashed;border-color:var(--warn)}
+.tag.flagtag{background:#fdecc8;color:#7a4a00}
+details>summary{cursor:pointer}
 footer{margin-top:30px;color:var(--muted);font-size:.82rem;text-align:center}
 footer a{color:var(--brand)}
 .note{font-size:.85rem;color:var(--muted)}
@@ -91,47 +96,57 @@ const need = q=>q.a.length;
 const isMulti = q=>q.a.length>1;
 function correct(q,sel){return sel&&sel.length===q.a.length&&q.a.every(x=>sel.includes(x))}
 
-/* ---------- start screen ---------- */
+/* ---------- home / instructions ---------- */
 function home(){
   clearInterval(tick);
   const saved = load();
   app.innerHTML = '';
-  const dom = Object.keys(D).map(k=>{
-    const n=Q.filter(q=>q.d==k).length;
-    return `<button class="mode" data-m="d${k}"><b>Domain ${k}: ${esc(D[k])}</b><span>${n} questions · instant feedback</span></button>`}).join('');
+  const dom = Object.keys(D).map(k=>`<button class="mode" data-m="d${k}"><b>Domain ${k}: ${esc(D[k])}</b><span>${Q.filter(q=>q.d==k).length} questions · instant feedback</span></button>`).join('');
   const h = el(`<div>
-    <h1>CCAO-F Practice Quiz</h1>
-    <p class="sub">Claude Certified Associate – Foundations · 60 original practice questions across 7 domains</p>
-    ${saved&&!saved.done?`<div class="card"><b>Resume your ${esc(saved.label)}</b><div class="note">${saved.i+1} of ${saved.ids.length} · ${Object.keys(saved.ans).length} answered</div><div class="row" style="margin-top:10px"><button class="btn" id="resume">Resume</button><button class="btn ghost" id="discard">Discard</button></div></div>`:''}
-    <h2>Full-length</h2>
-    <button class="mode" data-m="exam"><b>Exam simulation</b><span>All 60 questions, 120-minute timer, answers revealed at the end. Aim for ~75% in every domain.</span></button>
-    <button class="mode" data-m="all"><b>Practice – all 60</b><span>Instant feedback after each question, no timer.</span></button>
-    <button class="mode" data-m="shuf"><b>Practice – shuffled</b><span>All 60 in random order, instant feedback.</span></button>
-    <h2>By domain</h2>${dom}
+    <h1>Claude Certified Associate – Foundations</h1>
+    <p class="sub">CCAO-F · Full-length practice exam</p>
+    ${saved&&!saved.done?`<div class="card"><b>Exam in progress</b><div class="note">${Object.keys(saved.ans).length} of ${saved.ids.length} answered</div><div class="row" style="margin-top:10px"><button class="btn" id="resume">Resume exam</button><button class="btn ghost" id="discard">Abandon</button></div></div>`:''}
+    <div class="card">
+      <h2 style="margin-top:0">Before you begin</h2>
+      <ul class="rules">
+        <li><b>60 questions</b>, drawn from all seven domains in blueprint proportions, presented in mixed order.</li>
+        <li><b>120 minutes</b>. The timer starts when you press Begin and the exam submits automatically at zero.</li>
+        <li>Multiple choice (select ONE) and multiple response (select the number stated).</li>
+        <li>No feedback during the exam. You can change answers and <b>mark questions for review</b> before you submit.</li>
+        <li>Scores are reported per domain. Aim for roughly <b>75%</b> or better in every domain.</li>
+      </ul>
+      <button class="btn" id="begin">Begin exam</button>
+    </div>
+    <details class="card"><summary><b>Study mode</b> <span class="note">· instant feedback by domain</span></summary><div style="margin-top:12px">${dom}</div></details>
     <footer>Questions &amp; rationales by <a href="https://linkedin.com/in/purcellmatthew" target="_blank" rel="noopener">Matthew Purcell</a>, written against Exam Guide v1.0 (July 2026). Original practice items, not actual exam content.</footer>
   </div>`);
   app.appendChild(h);
   h.querySelectorAll('.mode').forEach(b=>b.onclick=()=>start(b.dataset.m));
-  const r=h.querySelector('#resume'); if(r) r.onclick=()=>{S=saved;S.t0=Date.now()-(S.elapsed||0)*1000;render()};
-  const d=h.querySelector('#discard'); if(d) d.onclick=()=>{clear();home()};
+  h.querySelector('#begin').onclick=()=>{ if(saved&&!saved.done&&!confirm('This replaces your exam in progress. Continue?'))return; start('exam')};
+  const r=h.querySelector('#resume'); if(r) r.onclick=()=>{S=saved;S.t0=Date.now()-(S.elapsed||0)*1000;S.review=false;render()};
+  const d=h.querySelector('#discard'); if(d) d.onclick=()=>{if(confirm('Abandon this exam?')){clear();home()}};
 }
 
 function start(m){
-  let qs, label, exam=false;
-  if(m==='exam'){qs=Q;label='exam simulation';exam=true}
-  else if(m==='all'){qs=Q;label='practice (all 60)'}
-  else if(m==='shuf'){qs=shuffle(Q);label='shuffled practice'}
-  else {const k=m.slice(1);qs=Q.filter(q=>q.d==k);label='Domain '+k+' practice'}
-  S={ids:qs.map(q=>q.id),i:0,ans:{},flag:{},exam,label,done:false,elapsed:0,t0:Date.now(),checked:{}};
+  let qs,label,exam=false;
+  if(m==='exam'){qs=shuffle(Q);label='practice exam';exam=true}
+  else {const k=m.slice(1);qs=Q.filter(q=>q.d==k);label='Domain '+k+' study'}
+  S={ids:qs.map(q=>q.id),i:0,ans:{},flag:{},exam,label,done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};
   save();render();
 }
 
-/* ---------- question screen ---------- */
+/* ---------- exam / study screen ---------- */
 function timeLeft(){return Math.max(0,EXAM_SECS-Math.floor((Date.now()-S.t0)/1000))}
-function fmt(s){const m=Math.floor(s/60);return m+':'+String(s%60).padStart(2,'0')}
+function fmt(s){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')}
+function startClock(clock){
+  const upd=()=>{const t=timeLeft();clock.textContent=fmt(t);clock.classList.toggle('low',t<600);
+    if(t<=0){clearInterval(tick);alert('Time is up. Your exam will now be submitted.');finish()}};
+  upd();tick=setInterval(upd,1000);
+}
 
 function render(){
   if(S.done) return results();
+  if(S.review) return reviewScreen();
   const q = Q.find(x=>x.id===S.ids[S.i]);
   const sel = S.ans[q.id]||[];
   const revealed = !S.exam && S.checked[q.id];
@@ -145,62 +160,87 @@ function render(){
   const steps = q.steps?`<ol class="steps">${q.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>`:'';
   const ok = correct(q,sel);
   const fb = revealed?`<div class="fb ${ok?'ok':'bad'}"><h3>${ok?'Correct':'Not quite'} — answer: ${q.a.join(', ')}</h3><div>${esc(q.w)}</div><small><b>Why not the others:</b> ${esc(q.n)}</small></div>`:'';
-  const dots = S.ids.map((id,idx)=>{
-    let c='dot';
-    if(idx===S.i)c+=' cur';
-    if(S.flag[id])c+=' flag';
-    if(S.ans[id]){ if(!S.exam&&S.checked[id]) c+= correct(Q.find(x=>x.id===id),S.ans[id])?' ok':' bad'; else c+=' done'}
-    return `<button class="${c}" data-j="${idx}" aria-label="Go to question ${idx+1}">${idx+1}</button>`}).join('');
   const answered=Object.keys(S.ans).length;
-  const last = S.i===total-1;
+  const last=S.i===total-1;
   app.innerHTML='';
   const h=el(`<div>
-    <div class="topbar"><button class="btn ghost" id="home">← Menu</button><span>${S.exam?'<b id="clock"></b> left · ':''}${answered}/${total} answered</span></div>
-    <div class="bar"><i style="width:${(S.i+1)/total*100}%"></i></div>
+    <div class="topbar">${S.exam?'<span class="clockbox">Time remaining <b id="clock"></b></span>':'<button class="btn ghost" id="home">← Menu</button>'}<span>Question <b>${S.i+1}</b> of ${total}</span></div>
+    <div class="bar"><i style="width:${answered/total*100}%"></i></div>
     <div class="card">
-      <div><span class="tag">Q ${S.i+1} of ${total}</span><span class="tag">Domain ${q.d}</span><span class="tag">${isMulti(q)?'Select '+need(q):'Select one'}</span></div>
-      <p class="q"><b>${q.id}</b> · ${esc(q.q)}</p>${steps}${opts}${fb}
-      <div class="row" style="margin-top:12px">
-        <button class="btn ghost" id="prev" ${S.i===0?'disabled':''}>Back</button>
-        <button class="btn ghost" id="flag">${S.flag[q.id]?'Unflag':'Flag for review'}</button>
+      <div><span class="tag">${isMulti(q)?'Select '+(need(q)===2?'TWO':need(q)):'Select ONE'}</span>${S.flag[q.id]?'<span class="tag flagtag">Marked for review</span>':''}${S.exam?'':`<span class="tag">Domain ${q.d}</span>`}</div>
+      <p class="q">${esc(q.q)}</p>${steps}${opts}${fb}
+      <div class="row" style="margin-top:14px">
+        <button class="btn ghost" id="prev" ${S.i===0?'disabled':''}>Previous</button>
+        <button class="btn ghost" id="flag">${S.flag[q.id]?'Unmark':'Mark for review'}</button>
         <span class="grow"></span>
-        ${S.exam||revealed? (last?`<button class="btn" id="finish">Finish &amp; see results</button>`:`<button class="btn" id="next">Next</button>`)
-          : `<button class="btn" id="check" ${sel.length!==need(q)?'disabled':''}>Check answer</button>`}
+        ${!S.exam&&!revealed?`<button class="btn" id="check" ${sel.length!==need(q)?'disabled':''}>Check answer</button>`
+          :last?`<button class="btn" id="review">${S.exam?'Review &amp; submit':'Finish'}</button>`:`<button class="btn" id="next">Next</button>`}
       </div>
     </div>
-    <div class="card"><b>Navigator</b><div class="rev">${dots}</div>${S.exam?'<div class="note">Exam mode: answers are shown after you finish. Flagged questions have an orange underline.</div>':''}
-    ${S.exam||answered?`<div style="margin-top:10px"><button class="btn ghost" id="finish2">End ${S.exam?'exam':'session'} now</button></div>`:''}</div>
+    ${S.exam?`<div class="row"><button class="btn ghost" id="review2">Review screen</button></div>`:''}
   </div>`);
   app.appendChild(h);
   h.querySelectorAll('.opt').forEach(b=>b.onclick=()=>pick(q,b.dataset.k));
-  h.querySelectorAll('.dot').forEach(b=>b.onclick=()=>{S.i=+b.dataset.j;save();render()});
-  h.querySelector('#home').onclick=()=>{S.elapsed=Math.floor((Date.now()-S.t0)/1000);save();home()};
-  h.querySelector('#prev').onclick=()=>{S.i--;save();render()};
+  const hm=h.querySelector('#home'); if(hm) hm.onclick=()=>{S.elapsed=Math.floor((Date.now()-S.t0)/1000);save();home()};
+  h.querySelector('#prev').onclick=()=>{S.i--;save();render();window.scrollTo(0,0)};
   h.querySelector('#flag').onclick=()=>{S.flag[q.id]=!S.flag[q.id];save();render()};
   const nx=h.querySelector('#next'); if(nx) nx.onclick=()=>{S.i++;save();render();window.scrollTo(0,0)};
   const ch=h.querySelector('#check'); if(ch) ch.onclick=()=>{S.checked[q.id]=true;save();render()};
-  const fin=()=>{ if(S.exam){const un=total-Object.keys(S.ans).length; if(un&&!confirm(un+' question(s) unanswered. Finish anyway?'))return;} finish()};
-  const f1=h.querySelector('#finish'); if(f1) f1.onclick=fin;
-  const f2=h.querySelector('#finish2'); if(f2) f2.onclick=fin;
-  if(S.exam){
-    const clock=h.querySelector('#clock');
-    const upd=()=>{const t=timeLeft();clock.textContent=fmt(t);if(t<=0){clearInterval(tick);alert('Time is up!');finish()}};
-    upd();tick=setInterval(upd,1000);
-  }
+  const goRev=()=>{ if(S.exam){S.review=true;save();render()} else finish() };
+  ['#review','#review2'].forEach(id=>{const b=h.querySelector(id); if(b) b.onclick=goRev});
+  if(S.exam) startClock(h.querySelector('#clock'));
 }
 
 function pick(q,k){
   let sel=(S.ans[q.id]||[]).slice();
   if(isMulti(q)){
     if(sel.includes(k)) sel=sel.filter(x=>x!==k);
-    else if(sel.length<need(q)) sel.push(k);
-    else { sel.shift(); sel.push(k); }
+    else { if(sel.length>=need(q)) sel.shift(); sel.push(k); }
   } else sel=[k];
   if(sel.length) S.ans[q.id]=sel; else delete S.ans[q.id];
   save();render();
 }
 
-function finish(){S.done=true;S.elapsed=Math.floor((Date.now()-S.t0)/1000);clearInterval(tick);save();results()}
+/* ---------- review screen (exam only) ---------- */
+function reviewScreen(){
+  clearInterval(tick);
+  const total=S.ids.length;
+  const unans=S.ids.filter(id=>!S.ans[id]).length;
+  const incomplete=S.ids.filter(id=>S.ans[id]&&S.ans[id].length!==need(Q.find(q=>q.id===id))).length;
+  const flagged=S.ids.filter(id=>S.flag[id]).length;
+  const dots=S.ids.map((id,idx)=>{
+    const q=Q.find(x=>x.id===id);let c='dot';
+    if(S.ans[id]) c+= S.ans[id].length===need(q)?' done':' part';
+    if(S.flag[id]) c+=' flag';
+    return `<button class="${c}" data-j="${idx}" aria-label="Question ${idx+1}">${idx+1}</button>`}).join('');
+  app.innerHTML='';
+  const h=el(`<div>
+    <div class="topbar"><span class="clockbox">Time remaining <b id="clock"></b></span><span>Review</span></div>
+    <div class="card">
+      <h2 style="margin-top:0">Review your answers</h2>
+      <p><b>${total-unans}</b> of ${total} answered · <b class="${unans?'fail':'pass'}">${unans}</b> unanswered${incomplete?` · <b class="fail">${incomplete}</b> incomplete`:''} · <b>${flagged}</b> marked for review</p>
+      <div class="rev">${dots}</div>
+      <div class="legend note">Filled = answered · outlined = unanswered · orange underline = marked for review · dashed = incomplete selection</div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn ghost" id="back">Back to exam</button>
+        <button class="btn ghost" id="nextflag" ${flagged?'':'disabled'}>Go to first marked</button>
+        <button class="btn ghost" id="nextun" ${unans?'':'disabled'}>Go to first unanswered</button>
+        <span class="grow"></span>
+        <button class="btn" id="submit">Submit exam</button>
+      </div>
+    </div></div>`);
+  app.appendChild(h);
+  const go=i=>{S.i=i;S.review=false;save();render();window.scrollTo(0,0)};
+  h.querySelectorAll('.dot').forEach(b=>b.onclick=()=>go(+b.dataset.j));
+  h.querySelector('#back').onclick=()=>go(S.i);
+  h.querySelector('#nextflag').onclick=()=>go(S.ids.findIndex(id=>S.flag[id]));
+  h.querySelector('#nextun').onclick=()=>go(S.ids.findIndex(id=>!S.ans[id]));
+  h.querySelector('#submit').onclick=()=>{
+    if(confirm(unans?`${unans} question(s) are unanswered. Submit and end the exam?`:'Submit your exam? You will not be able to change your answers.')) finish()};
+  startClock(h.querySelector('#clock'));
+}
+
+function finish(){S.done=true;S.review=false;S.elapsed=Math.min(EXAM_SECS,Math.floor((Date.now()-S.t0)/1000));clearInterval(tick);save();results()}
 
 /* ---------- results ---------- */
 function results(){
@@ -208,31 +248,35 @@ function results(){
   const per={};let tot=0;
   qs.forEach(q=>{per[q.d]=per[q.d]||{n:0,c:0};per[q.d].n++;if(correct(q,S.ans[q.id])){per[q.d].c++;tot++}});
   const pct=tot/qs.length;
-  const rows=Object.keys(per).map(k=>{const p=per[k].c/per[k].n;return `<tr><td>${k}. ${esc(D[k])}</td><td class="n">${per[k].c}/${per[k].n}</td><td style="width:90px"><div class="dbar"><i style="width:${p*100}%;background:${p>=PASS?'var(--ok)':'var(--bad)'}"></i></div></td></tr>`}).join('');
-  const review=qs.map((q,idx)=>{
+  const weak=Object.keys(per).filter(k=>per[k].c/per[k].n<PASS);
+  const rows=Object.keys(per).map(k=>{const p=per[k].c/per[k].n;return `<tr><td>${k}. ${esc(D[k])}</td><td class="n">${Math.round(p*100)}%</td><td class="n">${per[k].c}/${per[k].n}</td><td style="width:90px"><div class="dbar"><i style="width:${p*100}%;background:${p>=PASS?'var(--ok)':'var(--bad)'}"></i></div></td></tr>`}).join('');
+  const review=qs.map(q=>{
     const sel=S.ans[q.id]||[];const ok=correct(q,sel);
     const opts=Object.entries(q.o).map(([k,t])=>{let c='opt';if(q.a.includes(k))c+=sel.includes(k)?' ok':' miss';else if(sel.includes(k))c+=' bad';return `<div class="${c}"><span class="k">${k}.</span><span>${esc(t)}</span></div>`}).join('');
     const steps=q.steps?`<ol class="steps">${q.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>`:'';
-    return `<details class="card" ${ok?'':'open'}><summary><b>${q.id}</b> ${ok?'✅':sel.length?'❌':'⬜ unanswered'} <span class="note">Your answer: ${sel.join(', ')||'—'} · Correct: ${q.a.join(', ')}</span></summary>
+    return `<details class="card" ${ok?'':'open'}><summary><b>${q.id}</b> ${ok?'✅':sel.length?'❌':'⬜ unanswered'} <span class="note">Yours: ${sel.join(', ')||'—'} · Correct: ${q.a.join(', ')}</span></summary>
       <p class="q">${esc(q.q)}</p>${steps}${opts}
       <div class="fb"><div>${esc(q.w)}</div><small><b>Why not the others:</b> ${esc(q.n)}</small></div></details>`}).join('');
   app.innerHTML='';
   const h=el(`<div>
-    <h1>Results</h1><p class="sub">${esc(S.label)} · ${fmt(S.elapsed)} elapsed</p>
+    <h1>Exam complete</h1><p class="sub">${esc(S.label)} · time used ${fmt(S.elapsed)}</p>
     <div class="card"><div class="score ${pct>=PASS?'pass':'fail'}">${Math.round(pct*100)}%</div>
-      <div>${tot} of ${qs.length} correct · ${pct>=PASS?'above':'below'} the 75% target</div>
-      <h2>By domain</h2><table>${rows}</table>
+      <div><b>${pct>=PASS?'Meets':'Below'} the 75% readiness target</b> · ${tot} of ${qs.length} correct</div>
+      ${weak.length?`<p class="note">Below 75% in: ${weak.map(k=>esc(D[k])).join('; ')}.</p>`:'<p class="note">At or above 75% in every domain.</p>'}
+      <h2>Performance by domain</h2><table><tr><th>Domain</th><th class="n">Score</th><th class="n">Correct</th><th></th></tr>${rows}</table>
       <div class="row" style="margin-top:16px">
-        <button class="btn" id="again">Back to menu</button>
-        ${tot<qs.length?'<button class="btn ghost" id="retry">Retry missed questions</button>':''}
+        <button class="btn" id="showkey">${S.showKey?'Hide':'Review'} answers &amp; rationales</button>
+        <button class="btn ghost" id="again">Back to start</button>
+        ${tot<qs.length?'<button class="btn ghost" id="retry">Retry missed (study mode)</button>':''}
       </div></div>
-    <h2>Review</h2>${review}
+    ${S.showKey?`<h2>Answer review</h2>${review}`:''}
   </div>`);
   app.appendChild(h);
+  h.querySelector('#showkey').onclick=()=>{S.showKey=!S.showKey;save();results()};
   h.querySelector('#again').onclick=()=>{clear();home()};
   const r=h.querySelector('#retry');
   if(r) r.onclick=()=>{const miss=qs.filter(q=>!correct(q,S.ans[q.id])).map(q=>q.id);
-    S={ids:miss,i:0,ans:{},flag:{},exam:false,label:'retry of missed questions',done:false,elapsed:0,t0:Date.now(),checked:{}};save();render()};
+    S={ids:miss,i:0,ans:{},flag:{},exam:false,label:'retry of missed questions',done:false,elapsed:0,t0:Date.now(),checked:{},review:false,showKey:false};save();render()};
   window.scrollTo(0,0);
 }
 
